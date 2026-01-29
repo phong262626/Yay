@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>10s Secret Board (Admin Mode)</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+
+    <style>
+        /* CSS Reset & Dark Theme */
+        :root { --bg: #0a0a0a; --msg-bg: #1a1a1a; --accent: #00e676; --text: #ffffff; --admin-bg: #0f172a; }
+        * { box-sizing: border-box; font-family: 'Segoe UI', sans-serif; -webkit-tap-highlight-color: transparent; }
+        
+        body { 
+            margin: 0; background: var(--bg); color: var(--text); 
+            overflow: hidden; position: fixed; width: 100%; height: 100%;
+        }
+
+        /* Header (มีปุ่มลับซ่อนอยู่) */
+        header {
+            position: absolute; top: 0; left: 0; width: 100%; height: 60px;
+            background: rgba(10, 10, 10, 0.95); border-bottom: 1px solid #222; 
+            display: flex; align-items: center; justify-content: center; z-index: 10;
+        }
+        /* ปุ่มลับคือ Emoji นี้ */
+        #secret-btn { cursor: pointer; font-size: 1.4rem; margin-right: 10px; user-select: none; }
+        h1 { margin: 0; font-size: 1.2rem; color: var(--accent); }
+
+        /* Board Area */
+        #board {
+            position: absolute; top: 60px; bottom: 70px; left: 0; width: 100%;
+            overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px;
+        }
+
+        /* Message Cards */
+        .msg-card {
+            background: var(--msg-bg); padding: 10px; border-radius: 12px;
+            max-width: 80%; align-self: flex-start; position: relative;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .msg-card.mine { align-self: flex-end; background: #1e3a5f; }
+        .msg-text { font-size: 1rem; line-height: 1.4; word-break: break-word; }
+        .msg-image { max-width: 100%; border-radius: 8px; display: block; }
+        .progress-bar { height: 3px; background: var(--accent); margin-top: 8px; width: 100%; animation: countdown 10s linear forwards; }
+
+        /* Footer */
+        footer {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 70px;
+            background: #111; border-top: 1px solid #222;
+            display: flex; align-items: center; padding: 0 10px; z-index: 20;
+        }
+        .input-group { display: flex; width: 100%; background: #222; border-radius: 30px; padding: 5px; align-items: center; border: 1px solid #333; }
+        input[type="text"] { flex: 1; padding: 10px 15px; border: none; background: transparent; color: white; font-size: 1rem; outline: none; }
+        .btn-icon { width: 40px; height: 40px; border-radius: 50%; border: none; font-size: 1.4rem; cursor: pointer; background: transparent; color: #aaa; }
+        .btn-send { background: var(--accent); color: #000; margin-left: 5px; }
+
+        /* --- ADMIN PANEL (หน้าต่างลับ) --- */
+        #admin-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 999;
+            display: none; flex-direction: column; padding: 20px;
+        }
+        
+        /* หน้า Login */
+        #admin-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; }
+        #admin-pass { padding: 15px; font-size: 20px; text-align: center; border-radius: 10px; border: 1px solid #444; background: #222; color: #fff; width: 200px; margin-bottom: 15px; }
+        
+        /* หน้า Dashboard */
+        #admin-dashboard { display: none; flex-direction: column; height: 100%; }
+        .spy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .spy-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        
+        .spy-card {
+            background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 0.9rem;
+        }
+        .spy-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .spy-label { color: #94a3b8; }
+        .spy-val { color: #e2e8f0; font-weight: bold; }
+        .spy-device { color: var(--accent); font-size: 0.8rem; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #333; }
+
+        /* Animations */
+        @keyframes popIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        @keyframes countdown { to { width: 0%; } }
+        @keyframes fadeOut { to { opacity: 0; filter: blur(4px); } }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <span id="secret-btn" onclick="triggerAdmin()">🤫</span>
+        <h1>Secret Board</h1>
+    </header>
+
+    <div id="board"></div>
+
+    <div id="admin-overlay">
+        <div id="admin-login">
+            <h2 style="color: var(--accent);">ADMIN ACCESS</h2>
+            <input type="password" id="admin-pass" placeholder="Enter PIN" maxlength="6">
+            <button onclick="checkAdmin()" style="padding: 10px 30px; font-size: 18px; background: var(--accent); border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">UNLOCK</button>
+            <button onclick="closeAdmin()" style="margin-top: 20px; background: transparent; border: none; color: #666; cursor: pointer;">CANCEL</button>
+        </div>
+
+        <div id="admin-dashboard">
+            <div class="spy-header">
+                <h3 style="margin:0; color: var(--accent);">🕵️ LIVE SPY LOG</h3>
+                <button onclick="closeAdmin()" style="background:#333; color:#fff; border:none; padding:5px 15px; border-radius:5px;">CLOSE</button>
+            </div>
+            <div id="spy-container" class="spy-list">
+                </div>
+        </div>
+    </div>
+
+    <footer>
+        <div class="input-group">
+            <label for="imgInput" class="btn-icon">📷</label>
+            <input type="file" id="imgInput" accept="image/*" style="display: none;">
+            <input type="text" id="msgInput" placeholder="พิมพ์ข้อความ..." autocomplete="off">
+            <button class="btn-icon btn-send" onclick="sendText()">➤</button>
+        </div>
+    </footer>
+
+<script>
+    // --- FIREBASE CONFIG (ใช้ของเดิมพี่) ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyDHEHqYCU1dAJLOFPC7TLOa2KucoZG4bxA",
+        authDomain: "wolf-game-fdb66.firebaseapp.com",
+        databaseURL: "https://mooooo-9d6b8-default-rtdb.firebaseio.com",
+        projectId: "wolf-game-fdb66",
+        storageBucket: "wolf-game-fdb66.firebasestorage.app",
+        messagingSenderId: "10904255215",
+        appId: "1:10904255215:web:7a50312897b1e97c77f91a"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const storage = firebase.storage();
+
+    // ID เครื่องเรา
+    let myId = localStorage.getItem('myId');
+    if (!myId) { myId = Math.random().toString(36).substr(2, 9); localStorage.setItem('myId', myId); }
+
+    // เก็บ Device Info ของเราเองเพื่อส่งไปพร้อมข้อความ
+    function getDeviceInfo() {
+        const ua = navigator.userAgent;
+        let device = "Unknown Device";
+        if(ua.match(/Android/i)) device = "Android";
+        else if(ua.match(/iPhone/i)) device = "iPhone";
+        else if(ua.match(/iPad/i)) device = "iPad";
+        else if(ua.match(/Windows/i)) device = "Windows PC";
+        else if(ua.match(/Mac/i)) device = "Mac";
+
+        return {
+            model: device,
+            browser: ua, // ส่งไปทั้งดุ้น เดี๋ยวไปตัดคำในหน้าแอดมิน
+            screen: `${window.screen.width}x${window.screen.height}`
+        };
+    }
+
+    // --- MAIN CHAT LOGIC ---
+    const board = document.getElementById('board');
+    
+    // ฟังข้อความ (Public)
+    db.ref('secret_chat_v3').limitToLast(20).on('child_added', snapshot => {
+        const data = snapshot.val();
+        // Public View: แสดงข้อความปกติ
+        const timeLeft = 10000 - (Date.now() - data.timestamp);
+        if (timeLeft > 0) renderPublicMsg(data, timeLeft);
+        
+        // Admin View: ส่งเข้าห้อง Spy
+        renderSpyRow(data); 
+    });
+
+    function renderPublicMsg(data, duration) {
+        const div = document.createElement('div');
+        div.className = `msg-card ${data.senderId === myId ? 'mine' : ''}`;
+        let content = data.type === 'image' ? `<img src="${data.content}" class="msg-image">` : `<div class="msg-text">${data.content}</div>`;
+        
+        div.innerHTML = `${content}<div class="progress-bar" style="animation-duration: ${duration}ms"></div>`;
+        board.appendChild(div);
+        setTimeout(() => { board.scrollTop = board.scrollHeight; }, 100);
+
+        setTimeout(() => {
+            div.style.animation = "fadeOut 0.5s forwards";
+            setTimeout(() => div.remove(), 500);
+        }, duration);
+    }
+
+    // --- SENDING LOGIC ---
+    function sendText() {
+        const input = document.getElementById('msgInput');
+        const txt = input.value.trim();
+        if(!txt) return;
+        pushToFirebase('text', txt);
+        input.value = "";
+    }
+
+    document.getElementById('imgInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if(!file) return;
+        const ref = storage.ref(`spy_images/${Date.now()}_${Math.random().toString(36).substr(2,5)}`);
+        ref.put(file).then(snap => snap.ref.getDownloadURL()).then(url => {
+            pushToFirebase('image', url);
+        });
+    });
+
+    function pushToFirebase(type, content) {
+        const info = getDeviceInfo(); // ดึงข้อมูลเครื่องตอนส่ง
+        db.ref('secret_chat_v3').push({
+            type, content, senderId: myId,
+            timestamp: firebase.database.ServerValue.TIMESTAMP,
+            // 🔥 แอบแนบข้อมูลเครื่องไปด้วย
+            deviceModel: info.model,
+            userAgent: info.browser,
+            screenSize: info.screen
+        });
+    }
+
+    // --- ADMIN / SPY SYSTEM ---
+    let clickCount = 0;
+    
+    function triggerAdmin() {
+        clickCount++;
+        // กดปุ่ม 🤫 3 ครั้งเพื่อเปิด (กันคนมือลั่นไปโดน)
+        if(clickCount >= 3) {
+            document.getElementById('admin-overlay').style.display = 'flex';
+            document.getElementById('admin-login').style.display = 'flex';
+            document.getElementById('admin-dashboard').style.display = 'none';
+            clickCount = 0;
+        }
+    }
+
+    function checkAdmin() {
+        const pass = document.getElementById('admin-pass').value;
+        if(pass === "112233") {
+            document.getElementById('admin-login').style.display = 'none';
+            document.getElementById('admin-dashboard').style.display = 'flex';
+            document.getElementById('admin-pass').value = ""; // Clear pass
+        } else {
+            alert("รหัสผิด! อย่าพยายามแกะรอย");
+        }
+    }
+
+    function closeAdmin() {
+        document.getElementById('admin-overlay').style.display = 'none';
+    }
+
+    function renderSpyRow(data) {
+        // ฟังก์ชันแกะ User Agent ให้เป็นภาษาคน
+        const ua = data.userAgent || "";
+        let browserName = "Unknown";
+        if(ua.includes("Chrome")) browserName = "Chrome";
+        else if(ua.includes("Safari")) browserName = "Safari";
+        else if(ua.includes("Firefox")) browserName = "Firefox";
+        else if(ua.includes("Line")) browserName = "Line Browser";
+
+        const container = document.getElementById('spy-container');
+        const card = document.createElement('div');
+        card.className = "spy-card";
+        
+        let contentDisplay = data.type === 'image' ? `[ส่งรูปภาพ] <a href="${data.content}" target="_blank" style="color:#00e676">View</a>` : data.content;
+
+        // แปลงเวลา
+        const date = new Date(data.timestamp);
+        const timeStr = date.toLocaleTimeString('th-TH');
+
+        card.innerHTML = `
+            <div class="spy-row">
+                <span class="spy-label">TIME:</span>
+                <span class="spy-val">${timeStr}</span>
+            </div>
+            <div class="spy-row">
+                <span class="spy-label">MSG:</span>
+                <span class="spy-val" style="color: white;">${contentDisplay}</span>
+            </div>
+            <div class="spy-device">
+                📱 <b>${data.deviceModel || 'Unknown'}</b> | ${browserName}<br>
+                🖥️ Screen: ${data.screenSize || '-'} | ID: ...${data.senderId.substr(-4)}
+            </div>
+        `;
+        
+        // เอาข้อความใหม่ไว้บนสุด
+        container.prepend(card);
+    }
+
+</script>
+</body>
+</html>
